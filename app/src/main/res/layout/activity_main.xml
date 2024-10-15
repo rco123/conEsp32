@@ -12,18 +12,21 @@
         android:layout_height="0dp"
         android:layout_weight="4">
 
+        <WebView
+            android:id="@+id/webView"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:background="#00000000"/>
+
+
         <!-- 이미지 뷰 -->
         <ImageView
             android:id="@+id/imageView"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:src="@drawable/ic_launcher_foreground"
-            android:scaleType="fitXY" />
-
-        <WebView
-            android:id="@+id/webView"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent" />
+            android:background="#00000000"
+            android:scaleType="fitXY"/>
+        <!--            android:src="@drawable/ic_launcher_foreground"-->
 
         <!-- 기본 View로 CustomView 대체 -->
         <com.example.conesp32.CustomView
@@ -31,6 +34,8 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent"
             android:background="#00000000" />
+
+
     </FrameLayout>
 
     <!-- 입력 창과 버튼을 포함하는 LinearLayout -->

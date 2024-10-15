@@ -30,6 +30,7 @@ import android.webkit.WebViewClient
 
 import com.example.conesp32.loadFallbackImage
 import com.example.conesp32.loadStream
+import okio.ByteString
 
 
 class MainActivity : AppCompatActivity(), SensorEventListener {
@@ -66,6 +67,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
     private var currentAngle: Float = 0f // 현재 각도
     private val smoothingFactor: Float = 0.1f // 보간 정도 (0에 가까울수록 천천히, 1에 가까울수록 빠르게)
 
+    private var webSocket: WebSocket? = null  // WebSocket 객체를 저장할 전역 변수
 
     private val sendDataRunnable = object : Runnable {
 
@@ -147,7 +149,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
         // 기본 이미지 로드
         loadFallbackImage(webView)
-
         customView = findViewById(R.id.customView)
 
         // 버튼 초기화
@@ -161,10 +162,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
         accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
 
+        var imageView = findViewById<ImageView>(R.id.imageView)
+
+
         // 버튼 클릭 리스너 설정
         button1.setOnClickListener {
-
-            // image connection check
             if (imageConnectSts == true) {
                 Log.d("sgkim", "button 1, imageConnectSts = $imageConnectSts")
                 return@setOnClickListener
@@ -177,8 +179,8 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 editor.putString(IP_ADDRESS_KEY, ipAddress)
                 editor.apply()
 
-                streamUrl = "http://$ipAddress:81/stream"
-                loadStream(webView, streamUrl)
+                streamUrl = "ws://$ipAddress:81/ws1"
+                connectWebSocket(streamUrl, imageView)
                 Toast.makeText(this, "이미지 연결을 합니다.", Toast.LENGTH_SHORT).show()
             } else {
                 Toast.makeText(this, "유효한 IP 주소를 입력하세요.", Toast.LENGTH_SHORT).show()
@@ -192,6 +194,16 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             // 막대 숨기기 및 각도 초기화
             customView.setBarVisible(false)
             customView.setAngle(0f)
+
+            // cam view socket End
+            // 기본 이미지 또는 빈 화면으로 초기화
+            webSocket?.let {
+                it.close(1000, "User closed connection")  // 정상적인 종료를 위해 1000 코드 사용
+                webSocket = null  // WebSocket 객체 초기화
+            } ?: run {
+                Toast.makeText(this, "이미 연결이 종료되었습니다.", Toast.LENGTH_SHORT).show()
+            }
+            imageView.setImageDrawable(null)  // 이미지 제거하여 화면을 청소
 
             disconnectCommandWebSocket()
         }
@@ -213,7 +225,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 // WebSocket 연결을 8766 포트로 변경하여 출발 시 연결
                 val ipAddress = inputField.text.toString()
                 if (ipAddress.isNotEmpty()) {
-                    connectToCommandWebSocket(ipAddress, 91)
+                    connectToCommandWebSocket(ipAddress)
                 } else {
                     Toast.makeText(this, "유효한 IP 주소를 입력하세요.", Toast.LENGTH_SHORT).show()
                 }
@@ -223,7 +235,6 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
 
         button4.setOnClickListener {
-
             disconnectCommandWebSocket()
             customView.setBarVisible(false) // 막대 숨기기
             customView.setAngle(0f) // 막대 각도 초기화
@@ -236,14 +247,55 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
     }
 
-    private fun connectToCommandWebSocket(ipAddress: String, port: Int) {
+    // WebSocket 연결 함수
+    private fun connectWebSocket(url: String, imageView: ImageView) {
+        val client = OkHttpClient()
+        val request = Request.Builder().url(url).build()
+        val webSocketListener = object : WebSocketListener() {
+
+            override fun onOpen(webSocket: WebSocket, response: Response) {
+                this@MainActivity.webSocket = webSocket  // WebSocket 객체 저장
+                imageConnectSts = true
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "WebSocket 연결 성공", Toast.LENGTH_SHORT).show()
+                }
+            }
+
+            override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                // 이미지를 byte 배열로 받음
+                val byteArray = bytes.toByteArray()
+                val bitmap = BitmapFactory.decodeByteArray(byteArray, 0, byteArray.size)
+
+                // UI 스레드에서 ImageView 업데이트
+                Handler(Looper.getMainLooper()).post {
+                    imageView.setImageBitmap(bitmap)
+                }
+            }
+            // WebSocket 연결 종료 처리
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                imageConnectSts = false
+                runOnUiThread {
+                    Toast.makeText(this@MainActivity, "WebSocket 연결이 종료되었습니다.", Toast.LENGTH_SHORT).show()
+                }
+            }
+            override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.d("sgkim", "WebSocket 연결 실패: ${t.message}")
+            }
+        }
+
+        // WebSocket 시작
+        client.newWebSocket(request, webSocketListener)
+        client.dispatcher.executorService.shutdown()
+    }
+
+    private fun connectToCommandWebSocket(ipAddress: String) {
         // 기존 Command WebSocket 연결이 있다면 종료
         if (commandWebSocket != null) {
             commandWebSocket?.close(1000, "Reconnecting")
             commandWebSocket = null
         }
 
-        val url = "ws://$ipAddress:$port/ws"
+        val url = "ws://$ipAddress:82/ws2"
         val client = OkHttpClient()
 
         val request = Request.Builder().url(url).build()
@@ -296,14 +348,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         // client.dispatcher.executorService.shutdown()
     }
 
-
-    // WebSocket 연결 해제 함수 (포트 8766용)
+    // WebSocket 연결 해제 함수 (82용)
     private fun disconnectCommandWebSocket() {
         // 주기적 데이터 전송 중지
         handler.removeCallbacks(sendDataRunnable)
-
         commandWebSocket?.let{sendStop(it)}
-
         commandWebSocket?.close(1000, "Connection closed by user")
         commandWebSocket = null
     }
